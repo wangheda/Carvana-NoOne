@@ -37,6 +37,9 @@ if __name__ == "__main__":
   flags.DEFINE_string("train_dir", "model",
                       "The directory to save the model files in.")
   flags.DEFINE_string(
+      "train_data_list", None,
+      "List that contains training data path")
+  flags.DEFINE_string(
       "train_data_pattern", "train-data/data*.tfrecord",
       "Pattern for training data path")
   flags.DEFINE_integer("image_width", 1918, "Width of the image.")
@@ -126,6 +129,7 @@ def validate_class_name(flag_value, category, modules, expected_superclass):
   raise flags.FlagsError("Unable to find %s '%s'." % (category, flag_value))
 
 def get_input_data_tensors(reader,
+                           data_list,
                            data_pattern,
                            batch_size=16,
                            num_epochs=None,
@@ -150,7 +154,12 @@ def get_input_data_tensors(reader,
   """
   logging.info("Using batch size of " + str(batch_size) + " for training.")
   with tf.name_scope("train_input"):
-    files = gfile.Glob(data_pattern)
+    if data_list is not None:
+      with open(data_list) as F:
+        files = [line.strip() for line in F.readlines() if len(line.strip()) > 0]
+    else:
+      files = gfile.Glob(data_pattern)
+    print "number of training files:", len(files)
     if not files:
       raise IOError("Unable to find training files. data_pattern='" +
                     data_pattern + "'.")
@@ -176,6 +185,7 @@ def find_class_by_name(name, modules):
 
 def build_graph(reader,
                 model,
+                train_data_list,
                 train_data_pattern,
                 label_loss_fn=losses.CrossEntropyLoss(),
                 batch_size=16,
@@ -226,6 +236,7 @@ def build_graph(reader,
   image_id, image_data, image_mask = (
       get_input_data_tensors(
           reader,
+          train_data_list,
           train_data_pattern,
           batch_size=batch_size,
           num_readers=num_readers,
@@ -439,6 +450,7 @@ class Trainer(object):
                 model=model,
                 optimizer_class=optimizer_class,
                 clip_gradient_norm=FLAGS.clip_gradient_norm,
+                train_data_list=FLAGS.train_data_list,
                 train_data_pattern=FLAGS.train_data_pattern,
                 label_loss_fn=label_loss_fn,
                 base_learning_rate=FLAGS.base_learning_rate,
