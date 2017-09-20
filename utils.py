@@ -168,3 +168,25 @@ def clip_gradient_norms(gradients_to_variables, max_norm):
     clipped_grads_and_vars.append((grad, var))
   return clipped_grads_and_vars
 
+def clip_variable_norms(variables, max_norm, scale=1.0):
+  clipped_vars = []
+  if scale != 1.0:
+    for var in variables:
+      if var is not None:
+        if isinstance(var, tf.IndexedSlices):
+          tmp = tf.clip_by_norm(var.values * scale, max_norm)
+          var = tf.IndexedSlices(tmp, var.indices, var.dense_shape)
+        else:
+          var = tf.clip_by_norm(var * scale, max_norm)
+      clipped_vars.append(var)
+  else:
+    for var in variables:
+      if var is not None:
+        if isinstance(var, tf.IndexedSlices):
+          tmp = tf.clip_by_norm(var.values, max_norm)
+          var = tf.IndexedSlices(tmp, var.indices, var.dense_shape)
+        else:
+          var = tf.clip_by_norm(var, max_norm)
+      clipped_vars.append(var)
+  return clipped_vars
+

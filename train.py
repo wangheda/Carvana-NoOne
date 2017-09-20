@@ -99,6 +99,11 @@ if __name__ == "__main__":
       "Whether to write the device on which every op will run into the "
       "logs on startup.")
 
+  flags.DEFINE_bool("accumulate_gradients", False,
+      "Whether to accumulate gradients of several batches before apply them.")
+  flags.DEFINE_integer("apply_every_n_batches", 2,
+      "How many batches of gradients to compute before apply them together.")
+
 
 def validate_class_name(flag_value, category, modules, expected_superclass):
   """Checks that the given string matches a class of the expected type.
@@ -233,6 +238,7 @@ def build_graph(reader,
   tf.summary.scalar('learning_rate', learning_rate)
 
   optimizer = optimizer_class(learning_rate)
+
   image_id, image_data, image_mask = (
       get_input_data_tensors(
           reader,
@@ -289,12 +295,41 @@ def build_graph(reader,
     # Incorporate the L2 weight penalties etc.
     final_loss = regularization_penalty * reg_loss + label_loss
 
-    gradients = optimizer.compute_gradients(final_loss,
-        colocate_gradients_with_ops=False)
-    if clip_gradient_norm > 0:
-      with tf.name_scope('clip_grads'):
-        gradients = utils.clip_gradient_norms(gradients , clip_gradient_norm)
-    train_op = optimizer.apply_gradients(gradients, global_step=global_step)
+    # Accumulate several batches before gradient descent options
+    # to make larger batch than the memory could be able to hold
+    if FLAGS.accumulate_gradients:
+      assert FLAGS.apply_every_n_batches > 0, "apply_every_n_batches should be > 0"
+      scale = 1.0 / FLAGS.apply_every_n_batches
+
+      tvs = tf.trainable_variables()
+      accum_vars = [tf.Variable(tf.zeros_like(tv.initialized_value()), trainable=False) for tv in tvs] 
+      init_ops = [tv.assign(tf.zeros_like(tv)) for tv in accum_vars]
+      gvs = optimizer.compute_gradients(final_loss, tvs)
+      accum_ops = [accum_vars[i].assign_add(gv[0]) for i, gv in enumerate(gvs)]
+
+      if clip_gradient_norm > 0:
+        with tf.name_scope('clip_grads'):
+          clipped_accum_vars = utils.clip_variable_norms(accum_vars, 
+                  max_norm = clip_gradient_norm, scale = scale)
+          apply_op = optimizer.apply_gradients([(clipped_accum_vars[i], gv[1]) 
+                  for i, gv in enumerate(gvs)], global_step=global_step)
+          
+      else:
+          apply_op = optimizer.apply_gradients([(accum_vars[i] * scale, gv[1]) 
+                  for i, gv in enumerate(gvs)], global_step=global_step)
+      tf.get_collection_ref("train/init_ops").extend(init_ops)
+      tf.get_collection_ref("train/accum_ops").extend(accum_ops)
+      tf.add_to_collection("train/apply_op", apply_op)
+
+    # the original way, apply every batch
+    else:
+      gradients = optimizer.compute_gradients(final_loss,
+          colocate_gradients_with_ops=False)
+      if clip_gradient_norm > 0:
+        with tf.name_scope('clip_grads'):
+          gradients = utils.clip_gradient_norms(gradients, clip_gradient_norm)
+      train_op = optimizer.apply_gradients(gradients, global_step=global_step)
+      tf.add_to_collection("train/train_op", train_op)
 
     labels = tf.cast(image_mask, tf.int32)
     float_labels = tf.cast(image_mask, tf.float32)
@@ -308,13 +343,15 @@ def build_graph(reader,
     mean_iou = (2.0 * true_pos + 1e-7) / (2 * true_pos + false_pos + false_neg + 1e-7)
     print mean_iou
 
+    num_examples = tf.shape(labels)[0]
+
     tf.add_to_collection("global_step", global_step)
     tf.add_to_collection("loss", label_loss)
     tf.add_to_collection("predictions", predictions)
     tf.add_to_collection("model_input", model_input)
+    tf.add_to_collection("num_examples", num_examples)
     tf.add_to_collection("labels", labels)
     tf.add_to_collection("float_labels", float_labels)
-    tf.add_to_collection("train_op", train_op)
     tf.add_to_collection("bool_predictions", bool_predictions)
     tf.add_to_collection("auc", auc)
     tf.add_to_collection("mean_iou", mean_iou)
@@ -369,7 +406,13 @@ class Trainer(object):
         predictions = tf.get_collection("predictions")[0]
         labels = tf.get_collection("labels")[0]
         float_labels = tf.get_collection("float_labels")[0]
-        train_op = tf.get_collection("train_op")[0]
+        num_examples = tf.get_collection("num_examples")[0]
+        if FLAGS.accumulate_gradients:
+          init_ops = tf.get_collection("train/init_ops")
+          accum_ops = tf.get_collection("train/accum_ops")
+          apply_op = tf.get_collection("train/apply_op")[0]
+        else:
+          train_op = tf.get_collection("train/train_op")[0]
         auc = tf.get_collection("auc")[0]
         mean_iou = tf.get_collection("mean_iou")[0]
         init_op = tf.global_variables_initializer()
@@ -385,6 +428,8 @@ class Trainer(object):
         save_summaries_secs=120,
         saver=saver)
 
+    mean = lambda x: sum(x) / len(x)
+
     logging.info("%s: Starting managed session.", task_as_string(self.task))
     with sv.managed_session(target, config=self.config) as sess:
 
@@ -396,12 +441,33 @@ class Trainer(object):
           steps += 1
           batch_start_time = time.time()
 
-          _, global_step_val, loss_val, predictions_val, labels_val, auc_val, mean_iou_val = sess.run(
-              [train_op, global_step, loss, predictions, labels, auc, mean_iou])
+          num_examples_processed = 0
+
+          if FLAGS.accumulate_gradients:
+            # init the buffer to zero
+            sess.run(init_ops)
+            # compute gradients
+            loss_val, auc_val, mean_iou_val = [], [], []
+            for i in xrange(FLAGS.apply_every_n_batches):
+              ret_list = sess.run([num_examples, loss, auc, mean_iou] + accum_ops)
+              num_examples_processed += ret_list[0]
+              loss_val.append(ret_list[1])
+              auc_val.append(ret_list[2])
+              mean_iou_val.append(ret_list[3])
+            # accumulate all
+            loss_val, auc_val, mean_iou_val = map(mean, [loss_val, auc_val, mean_iou_val])
+            _, global_step_val = sess.run([apply_op, global_step])
+
+          else:
+            # the original apply-every-batch scheme
+            _, global_step_val, loss_val, predictions_val, labels_val, auc_val, mean_iou_val, num_examples_val = sess.run(
+                [train_op, global_step, loss, predictions, labels, auc, mean_iou, num_examples])
+            num_examples_processed += num_examples_val
+
           seconds_per_batch = time.time() - batch_start_time
 
           if self.is_master:
-            examples_per_second = labels_val.shape[0] / seconds_per_batch
+            examples_per_second = num_examples_processed / seconds_per_batch
 
             logging.info("%s: training step " + str(global_step_val) + 
                          "| AUC: " + ("%.3f" % auc_val) + 
