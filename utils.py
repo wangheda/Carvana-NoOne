@@ -79,52 +79,6 @@ def AddGlobalStepSummary(summary_writer,
   return info
 
 
-def AddEpochSummary(summary_writer,
-                    global_step_val,
-                    epoch_info_dict,
-                    summary_scope="Eval"):
-  """Add the epoch summary to the Tensorboard.
-
-  Args:
-    summary_writer: Tensorflow summary_writer.
-    global_step_val: a int value of the global step.
-    epoch_info_dict: a dictionary of the evaluation metrics calculated for the
-      whole epoch.
-    summary_scope: Train or Eval.
-
-  Returns:
-    A string of this global_step summary
-  """
-  epoch_id = epoch_info_dict["epoch_id"]
-  avg_hit_at_one = epoch_info_dict["avg_hit_at_one"]
-  avg_perr = epoch_info_dict["avg_perr"]
-  avg_loss = epoch_info_dict["avg_loss"]
-  aps = epoch_info_dict["aps"]
-  gap = epoch_info_dict["gap"]
-  mean_ap = numpy.mean(aps)
-
-  summary_writer.add_summary(
-      MakeSummary("Epoch/" + summary_scope + "_Avg_Hit@1", avg_hit_at_one),
-      global_step_val)
-  summary_writer.add_summary(
-      MakeSummary("Epoch/" + summary_scope + "_Avg_Perr", avg_perr),
-      global_step_val)
-  summary_writer.add_summary(
-      MakeSummary("Epoch/" + summary_scope + "_Avg_Loss", avg_loss),
-      global_step_val)
-  summary_writer.add_summary(
-      MakeSummary("Epoch/" + summary_scope + "_MAP", mean_ap),
-          global_step_val)
-  summary_writer.add_summary(
-      MakeSummary("Epoch/" + summary_scope + "_GAP", gap),
-          global_step_val)
-  summary_writer.flush()
-
-  info = ("epoch/eval number {0} | Avg_Hit@1: {1:.3f} | Avg_PERR: {2:.3f} "
-          "| MAP: {3:.3f} | GAP: {4:.3f} | Avg_Loss: {5:3f}").format(
-          epoch_id, avg_hit_at_one, avg_perr, mean_ap, gap, avg_loss)
-  return info
-
 def GetListOfFeatureNames(feature_names):
   """Extract the list of feature names
      from string of comma separated values.
@@ -190,3 +144,24 @@ def clip_variable_norms(variables, max_norm, scale=1.0):
       clipped_vars.append(var)
   return clipped_vars
 
+
+def AddEpochSummary(summary_writer,
+                    epoch_info_dict,
+                    summary_scope="Eval"):
+
+  epoch_id = epoch_info_dict["epoch_id"]
+  avg_loss = epoch_info_dict["avg_loss"]
+  mean_iou = epoch_info_dict["mean_iou"]
+
+  summary_writer.add_summary(
+      MakeSummary("Epoch/" + summary_scope + "_Avg_Loss", avg_loss),
+          epoch_id)
+  summary_writer.add_summary(
+      MakeSummary("Epoch/" + summary_scope + "_Mean_IOU", mean_iou),
+          epoch_id)
+  summary_writer.flush()
+
+  info = ("epoch/eval number {0} "
+          "| Mean IOU: {1:.5f} | Avg_Loss: {2:3f}").format(
+          epoch_id, mean_iou, avg_loss)
+  return info

@@ -105,6 +105,12 @@ if __name__ == "__main__":
       "How many batches of gradients to compute before apply them together.")
 
 
+def find_class_by_name(name, modules):
+  """Searches the provided modules for the named class and returns it."""
+  modules = [getattr(module, name, None) for module in modules]
+  return next(a for a in modules if a)
+
+
 def validate_class_name(flag_value, category, modules, expected_superclass):
   """Checks that the given string matches a class of the expected type.
 
@@ -182,11 +188,6 @@ def get_input_data_tensors(reader,
         min_after_dequeue=FLAGS.batch_size,
         allow_smaller_final_batch=True,
         enqueue_many=True)
-
-def find_class_by_name(name, modules):
-  """Searches the provided modules for the named class and returns it."""
-  modules = [getattr(module, name, None) for module in modules]
-  return next(a for a in modules if a)
 
 def build_graph(reader,
                 model,

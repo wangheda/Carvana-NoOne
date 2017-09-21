@@ -170,3 +170,5 @@ class EvaluationMetrics(object):
     self.map_calculator.clear()
     self.global_ap_calculator.clear()
     self.num_examples = 0
+
+

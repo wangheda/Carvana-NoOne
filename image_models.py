@@ -17,9 +17,6 @@
 from tensorflow import flags
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string("cnn_filter_sizes", "3,5", "Sizes of cnn filters.")
-flags.DEFINE_string("cnn_filter_nums", "256,256", "Numbers of every cnn filters.")
-
 import sys
 from os.path import dirname
 if dirname(__file__) not in sys.path:
