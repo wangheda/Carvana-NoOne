@@ -10,7 +10,7 @@ FLAGS = flags.FLAGS
 class MixedScaledUNetModel(models.BaseModel):
   """Build a U-Net architecture"""
 
-  def conv_conv_pool(self, input_, n_filters, is_training, name, pool=True, activation=tf.nn.relu):
+  def conv_conv_pool(self, input_, n_filters, is_training, name, pool=True, activation=tf.nn.relu, scope=""):
     """{Conv -> BN -> RELU}x2 -> {Pool, optional}
     Args:
         input_ (4-D Tensor): (batch_size, H, W, C)
@@ -25,7 +25,7 @@ class MixedScaledUNetModel(models.BaseModel):
     """
     net = input_
 
-    with tf.variable_scope("layer{}".format(name)):
+    with tf.variable_scope(scope+"layer{}".format(name)):
       for i, F in enumerate(n_filters):
         net = tf.layers.conv2d(net, F, (3, 3), activation=None, padding='same', name="conv_{}".format(i + 1))
         net = tf.layers.batch_normalization(net, training=is_training, name="bn_{}".format(i + 1))
@@ -39,7 +39,7 @@ class MixedScaledUNetModel(models.BaseModel):
       return net, pool
 
 
-  def upsample_concat(self, inputA, input_B, name):
+  def upsample_concat(self, inputA, input_B, name, scope=""):
     """Upsample `inputA` and concat with `input_B`
     Args:
         input_A (4-D Tensor): (N, H, W, C)
@@ -48,12 +48,12 @@ class MixedScaledUNetModel(models.BaseModel):
     Returns:
         output (4-D Tensor): (N, 2*H, 2*W, C + C2)
     """
-    upsample = self.upsampling_2D(inputA, size=(2, 2), name=name)
+    upsample = self.upsampling_2D(inputA, size=(2, 2), name=scope+name)
 
-    return tf.concat([upsample, input_B], axis=-1, name="concat_{}".format(name))
+    return tf.concat([upsample, input_B], axis=-1, name=scope+"concat_{}".format(name))
 
 
-  def downsampling_2D(self, tensor, name, size=(2, 2)):
+  def downsampling_2D(self, tensor, name, size=(2, 2), scope=""):
     """Downsample/Rescale `tensor` by size
     Args:
         tensor (4-D Tensor): (N, H, W, C)
@@ -71,7 +71,7 @@ class MixedScaledUNetModel(models.BaseModel):
 
     return tf.image.resize_images(tensor, (target_H, target_W))
 
-  def upsampling_2D(self, tensor, name, size=(2, 2)):
+  def upsampling_2D(self, tensor, name, size=(2, 2), scope=""):
     """Upsample/Rescale `tensor` by size
     Args:
         tensor (4-D Tensor): (N, H, W, C)
@@ -87,9 +87,9 @@ class MixedScaledUNetModel(models.BaseModel):
     target_H = H * H_multi
     target_W = W * W_multi
 
-    return tf.image.resize_nearest_neighbor(tensor, (target_H, target_W), name="upsample_{}".format(name))
+    return tf.image.resize_nearest_neighbor(tensor, (target_H, target_W), name=scope+"upsample_{}".format(name))
 
-  def unet(self, model_input, is_training=True, **unused_params):
+  def unet(self, model_input, is_training=True, scope="", **unused_params):
     """Build a U-Net architecture
     Args:
         X (4-D Tensor): (N, H, W, C)
@@ -102,48 +102,51 @@ class MixedScaledUNetModel(models.BaseModel):
         https://arxiv.org/abs/1505.04597
     """
     print "model_input", model_input
+
     float_input = tf.cast(model_input, dtype=tf.float32)
     print "float_input", float_input
+
     scaled_input = (1.0 / 127.5) * float_input - 1
     print "scaled_input", scaled_input
-    net = tf.layers.conv2d(scaled_input, 3, (1, 1), name="color_space_adjust")
+
+    net = tf.layers.conv2d(scaled_input, 3, (1, 1), name=scope+"color_space_adjust")
     print "net", net
-    conv1, pool1 = self.conv_conv_pool(net, [8, 8], is_training, name=1)
+    conv1, pool1 = self.conv_conv_pool(net, [8, 8], is_training, name=1, scope=scope)
     print "conv1", conv1
     print "pool1", pool1
-    conv2, pool2 = self.conv_conv_pool(pool1, [16, 16], is_training, name=2)
+    conv2, pool2 = self.conv_conv_pool(pool1, [16, 16], is_training, name=2, scope=scope)
     print "conv2", conv2
     print "pool2", pool2
-    conv3, pool3 = self.conv_conv_pool(pool2, [32, 32], is_training, name=3)
+    conv3, pool3 = self.conv_conv_pool(pool2, [32, 32], is_training, name=3, scope=scope)
     print "conv3", conv3
     print "pool3", pool3
-    conv4, pool4 = self.conv_conv_pool(pool3, [64, 64], is_training, name=4)
+    conv4, pool4 = self.conv_conv_pool(pool3, [64, 64], is_training, name=4, scope=scope)
     print "conv4", conv4
     print "pool4", pool4
-    conv5 = self.conv_conv_pool(pool4, [128, 128], is_training, name=5, pool=False)
+    conv5 = self.conv_conv_pool(pool4, [128, 128], is_training, name=5, pool=False, scope=scope)
     print "conv5", conv5
 
-    up6 = self.upsample_concat(conv5, conv4, name=6)
+    up6 = self.upsample_concat(conv5, conv4, name=6, scope=scope)
     print "up6", up6
-    conv6 = self.conv_conv_pool(up6, [64, 64], is_training, name=6, pool=False)
+    conv6 = self.conv_conv_pool(up6, [64, 64], is_training, name=6, pool=False, scope=scope)
     print "conv6", conv6
 
-    up7 = self.upsample_concat(conv6, conv3, name=7)
+    up7 = self.upsample_concat(conv6, conv3, name=7, scope=scope)
     print "up7", up7
-    conv7 = self.conv_conv_pool(up7, [32, 32], is_training, name=7, pool=False)
+    conv7 = self.conv_conv_pool(up7, [32, 32], is_training, name=7, pool=False, scope=scope)
     print "conv7", conv7
 
-    up8 = self.upsample_concat(conv7, conv2, name=8)
+    up8 = self.upsample_concat(conv7, conv2, name=8, scope=scope)
     print "up8", up8
-    conv8 = self.conv_conv_pool(up8, [16, 16], is_training, name=8, pool=False)
+    conv8 = self.conv_conv_pool(up8, [16, 16], is_training, name=8, pool=False, scope=scope)
     print "conv8", conv8
 
-    up9 = self.upsample_concat(conv8, conv1, name=9)
+    up9 = self.upsample_concat(conv8, conv1, name=9, scope=scope)
     print "up9", up9
-    conv9 = self.conv_conv_pool(up9, [8, 8], is_training, name=9, pool=False)
+    conv9 = self.conv_conv_pool(up9, [8, 8], is_training, name=9, pool=False, scope=scope)
     print "conv9", conv9
 
-    predictions = tf.layers.conv2d(conv9, 1, (1, 1), name='final', activation=tf.nn.sigmoid, padding='same')
+    predictions = tf.layers.conv2d(conv9, 1, (1, 1), name=scope+'final', activation=tf.nn.sigmoid, padding='same')
     print "predictions", predictions
     return predictions
 
@@ -167,12 +170,13 @@ class MixedScaledUNetModel(models.BaseModel):
 
     predictions = []
     for i, downsample_rate in enumerate(rates):
-      m = self.downsampling_2D(model_input, (downsample_rate, downsample_rate))
-      r = self.unet(m, is_training, **unused_params)
-      p = self.upsampling_2D(r, "prediction_%d" % i, (downsample_rate, downsample_rate))
+      scope = "scale%d_" % downsample_rate
+      m = self.downsampling_2D(model_input, (downsample_rate, downsample_rate), scope=scope)
+      r = self.unet(m, is_training, scope=scope, **unused_params)
+      p = self.upsampling_2D(r, "prediction_%d"%i, (downsample_rate, downsample_rate), scope=scope)
       predictions.append(p)
 
-    predictions = tf.add_n(predictions) / len(rates)
+    predictions = tf.add_n(predictions) / float(len(rates))
     print "predictions", predictions
 
     predictions = predictions[:, :, 321:-321, 0]
