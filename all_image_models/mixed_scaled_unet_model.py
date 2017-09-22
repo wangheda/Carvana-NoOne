@@ -48,7 +48,7 @@ class MixedScaledUNetModel(models.BaseModel):
     Returns:
         output (4-D Tensor): (N, 2*H, 2*W, C + C2)
     """
-    upsample = self.upsampling_2D(inputA, size=(2, 2), name=scope+name)
+    upsample = self.upsampling_2D(inputA, size=(2, 2), name=name, scope=scope)
 
     return tf.concat([upsample, input_B], axis=-1, name=scope+"concat_{}".format(name))
 
@@ -165,21 +165,21 @@ class MixedScaledUNetModel(models.BaseModel):
     rates = map(int, FLAGS.mixed_scaled_unet_downsample_rate.split(","))
 
     print "model_input", model_input
-    model_input = tf.pad(model_input, paddings=[[0,0], [0,0], [321,321], [0,0]])
+    model_input = tf.pad(model_input, paddings=[[0,0], [320,320], [1,1], [0,0]])
     print "padded model_input", model_input
 
     predictions = []
     for i, downsample_rate in enumerate(rates):
       scope = "scale%d_" % downsample_rate
-      m = self.downsampling_2D(model_input, (downsample_rate, downsample_rate), scope=scope)
+      m = self.downsampling_2D(model_input, name="downsample_%d"%i, size=(downsample_rate, downsample_rate), scope=scope)
       r = self.unet(m, is_training, scope=scope, **unused_params)
-      p = self.upsampling_2D(r, "prediction_%d"%i, (downsample_rate, downsample_rate), scope=scope)
+      p = self.upsampling_2D(r, name="prediction_%d"%i, size=(downsample_rate, downsample_rate), scope=scope)
       predictions.append(p)
 
     predictions = tf.add_n(predictions) / float(len(rates))
     print "predictions", predictions
 
-    predictions = predictions[:, :, 321:-321, 0]
+    predictions = predictions[:, 320:-320, 1:-1, 0]
     print "de-padded predictions", predictions
     return {"predictions": predictions}
 
