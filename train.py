@@ -230,9 +230,14 @@ def build_graph(reader,
   
   global_step = tf.Variable(0, trainable=False, name="global_step")
   
+  if FLAGS.accumulate_gradients:
+    actual_batch_size = batch_size * FLAGS.apply_every_n_batches 
+  else:
+    actual_batch_size = batch_size
+
   learning_rate = tf.train.exponential_decay(
       base_learning_rate,
-      global_step * batch_size,
+      global_step * actual_batch_size,
       learning_rate_decay_examples,
       learning_rate_decay,
       staircase=True)
