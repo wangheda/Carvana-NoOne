@@ -127,7 +127,7 @@ def build_graph(reader,
       batch_size=batch_size)
 
   model_input = image_data
-  tf.summary.histogram("model/input", model_input)
+  tf.summary.histogram("eval/input", model_input)
 
   feature_dim = len(model_input.get_shape()) - 1
   with tf.name_scope("model"):
@@ -142,8 +142,8 @@ def build_graph(reader,
     else:
       label_loss = label_loss_fn.calculate_loss(predictions, image_mask)
 
-    tf.summary.histogram("model/predictions", predictions)
-    tf.summary.scalar("label_loss", label_loss)
+    tf.summary.histogram("eval/predictions", predictions)
+    tf.summary.scalar("eval/label_loss", label_loss)
 
     labels = tf.cast(image_mask, tf.int32)
     float_labels = tf.cast(image_mask, tf.float32)

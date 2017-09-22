@@ -83,9 +83,9 @@ if __name__ == "__main__":
                        "halting training.")
   flags.DEFINE_integer("max_steps", None,
                        "How many steps before stop.")
-  flags.DEFINE_float("keep_checkpoint_every_n_hours", 0.1,
+  flags.DEFINE_float("keep_checkpoint_every_n_hours", 0.01,
                      "How many hours before saving a new checkpoint")
-  flags.DEFINE_integer("keep_checkpoint_interval", 2,
+  flags.DEFINE_integer("keep_checkpoint_interval", 1,
                      "How many minutes before saving a new checkpoint")
 
   # Other flags.

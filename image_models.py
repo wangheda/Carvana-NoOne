@@ -22,3 +22,7 @@ from os.path import dirname
 if dirname(__file__) not in sys.path:
   sys.path.append(dirname(__file__))
 from all_image_models import *
+
+
+flags.DEFINE_integer("scaled_unet_downsample_rate", 2, "Rate of downsampling in ScaledUNetModel.")
+flags.DEFINE_string("mixed_scaled_unet_downsample_rate", "2,3,5", "Rate of downsampling in MixedScaledUNetModel.")
