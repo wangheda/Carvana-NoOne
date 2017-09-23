@@ -5,6 +5,8 @@ train-masks
 train-data
 test-images
 test-data
+output/
+eval-unet.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
