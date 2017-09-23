@@ -353,6 +353,7 @@ def build_graph(reader,
 
     tf.add_to_collection("global_step", global_step)
     tf.add_to_collection("loss", label_loss)
+    tf.add_to_collection("id_batch", image_id)
     tf.add_to_collection("predictions", predictions)
     tf.add_to_collection("model_input", model_input)
     tf.add_to_collection("num_examples", num_examples)

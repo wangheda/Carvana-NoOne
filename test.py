@@ -64,6 +64,7 @@ if __name__ == "__main__":
 
   # Other flags.
   flags.DEFINE_boolean("run_once", False, "Whether to run test only once.")
+  flags.DEFINE_boolean("half_memory", False, "Whether to run eval with only 45% GPU memory.")
 
 
 def find_class_by_name(name, modules):
@@ -133,13 +134,15 @@ def build_graph(reader,
     for variable in slim.get_model_variables():
       tf.summary.histogram(variable.op.name, variable)
 
-    predictions = tf.cast(result["predictions"], tf.int32)
-    tf.summary.histogram("test/predictions", predictions)
+    predictions = result["predictions"]
+    bool_predictions = tf.greater(predictions, prediction_threshold)
+    int_predictions = tf.cast(bool_predictions, tf.int32)
 
+    tf.summary.histogram("test/predictions", predictions)
     num_examples = tf.shape(predictions)[0]
 
   tf.add_to_collection("global_step", global_step)
-  tf.add_to_collection("predictions", predictions)
+  tf.add_to_collection("predictions", int_predictions)
   tf.add_to_collection("input_batch", model_input)
   tf.add_to_collection("id_batch", image_id)
   tf.add_to_collection("num_examples", num_examples)
@@ -163,75 +166,83 @@ def test_loop(id_batch, prediction_batch, num_examples,
   """
 
   global_step_val = -1
-  with tf.Session() as sess:
-    if FLAGS.model_checkpoint_path:
-      checkpoint = FLAGS.model_checkpoint_path
-    else:
-      checkpoint = tf.train.latest_checkpoint(FLAGS.train_dir)
-    if checkpoint:
-      logging.info("Loading checkpoint for test: " + checkpoint)
-      # Restores from checkpoint
-      saver.restore(sess, checkpoint)
-      # Assuming model_checkpoint_path looks something like:
-      # /my-favorite-path/yt8m_train/model.ckpt-0, extract global_step from it.
-      global_step_val = checkpoint.split("/")[-1].split("-")[-1]
-    else:
-      logging.info("No checkpoint file found.")
-      return global_step_val
+  if FLAGS.half_memory:
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.45)
+    sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+  else:
+    sess = tf.Session()
 
-    if global_step_val == last_global_step_val:
-      logging.info("skip this checkpoint global_step_val=%s "
-                   "(same as the previous one).", global_step_val)
-      return global_step_val
+  if FLAGS.model_checkpoint_path:
+    checkpoint = FLAGS.model_checkpoint_path
+  else:
+    checkpoint = tf.train.latest_checkpoint(FLAGS.train_dir)
+  if checkpoint:
+    logging.info("Loading checkpoint for test: " + checkpoint)
+    # Restores from checkpoint
+    saver.restore(sess, checkpoint)
+    # Assuming model_checkpoint_path looks something like:
+    # /my-favorite-path/yt8m_train/model.ckpt-0, extract global_step from it.
+    global_step_val = checkpoint.split("/")[-1].split("-")[-1]
+  else:
+    logging.info("No checkpoint file found.")
+    return global_step_val
 
-    sess.run([tf.local_variables_initializer()])
+  if global_step_val == last_global_step_val:
+    logging.info("skip this checkpoint global_step_val=%s "
+                 "(same as the previous one).", global_step_val)
+    return global_step_val
 
-    # Start the queue runners.
-    fetches = [id_batch, prediction_batch, num_examples, summary_op]
-    coord = tf.train.Coordinator()
-    
+  sess.run([tf.local_variables_initializer()])
+
+  # Start the queue runners.
+  fetches = [id_batch, prediction_batch, num_examples, summary_op]
+  coord = tf.train.Coordinator()
+  
+  try:
     with open(FLAGS.output_file, "w") as F_test:
       print >> F_test, test_util.get_csv_header()
-      try:
-        threads = []
-        for qr in tf.get_collection(tf.GraphKeys.QUEUE_RUNNERS):
-          threads.extend(qr.create_threads(
-              sess, coord=coord, daemon=True,
-              start=True))
-        logging.info("enter test loop global_step_val = %s. ",
-                     global_step_val)
 
-        examples_processed = 0
+      threads = []
+      for qr in tf.get_collection(tf.GraphKeys.QUEUE_RUNNERS):
+        threads.extend(qr.create_threads(
+            sess, coord=coord, daemon=True,
+            start=True))
+      logging.info("enter test loop global_step_val = %s. ",
+                   global_step_val)
 
-        while not coord.should_stop():
-          batch_start_time = time.time()
+      examples_processed = 0
 
-          id_val, predictions_val, num_examples_val, summary_val = sess.run(fetches)
+      while not coord.should_stop():
+        batch_start_time = time.time()
 
-          num = predictions_val.shape[0]
-          for i in xrange(num):
-            print >> F_test, test_util.convert_id_array_to_csv(id_val[i], predictions_val[i,:,:])
+        id_val, predictions_val, num_examples_val, summary_val = sess.run(fetches)
 
-          seconds_per_batch = time.time() - batch_start_time
-          example_per_second = num_examples_val / seconds_per_batch
+        num = predictions_val.shape[0]
+        for i in xrange(num):
+          print >> F_test, test_util.convert_id_array_to_csv(id_val[i], predictions_val[i,:,:])
 
-          examples_processed += num_examples_val
+        seconds_per_batch = time.time() - batch_start_time
+        example_per_second = num_examples_val / seconds_per_batch
 
-          logging.info("examples_processed: %d", examples_processed)
+        examples_processed += num_examples_val
 
-      except tf.errors.OutOfRangeError as e:
-        logging.info(
-            "Done with batched inference. Now calculating global performance "
-            "metrics.")
+        summary_writer.flush()
+        logging.info("examples_processed: %d", examples_processed)
 
-      except Exception as e:  # pylint: disable=broad-except
-        logging.info("Unexpected exception: " + str(e))
-        coord.request_stop(e)
+  except tf.errors.OutOfRangeError as e:
+    logging.info(
+        "Done with batched inference. Now calculating global performance "
+        "metrics.")
 
-      coord.request_stop()
-      coord.join(threads, stop_grace_period_secs=10)
+  except Exception as e:  # pylint: disable=broad-except
+    logging.info("Unexpected exception: " + str(e))
+    coord.request_stop(e)
 
-    return global_step_val
+  coord.request_stop()
+  coord.join(threads, stop_grace_period_secs=10)
+
+  sess.close()
+  return global_step_val
 
 
 def test():

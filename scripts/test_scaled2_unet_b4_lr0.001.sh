@@ -4,4 +4,6 @@ python test.py \
   --test_data_pattern=test-data/*.tfrecord \
   --batch_size=4 \
   --model=ScaledUNetModel \
+  --run_once=True \
+  --half_memory=True \
   --output_file=output/scaled3_unet_train-5-accum_20078.csv

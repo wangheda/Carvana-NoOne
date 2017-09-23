@@ -64,6 +64,7 @@ if __name__ == "__main__":
 
   # Other flags.
   flags.DEFINE_boolean("run_once", False, "Whether to run eval only once.")
+  flags.DEFINE_boolean("half_memory", False, "Whether to run eval with only 45% GPU memory.")
 
 
 def find_class_by_name(name, modules):
@@ -194,84 +195,90 @@ def evaluation_loop(id_batch, prediction_batch, label_batch, loss, mean_iou, num
   """
 
   global_step_val = -1
-  with tf.Session() as sess:
-    if FLAGS.model_checkpoint_path:
-      checkpoint = FLAGS.model_checkpoint_path
-    else:
-      checkpoint = tf.train.latest_checkpoint(FLAGS.train_dir)
-    if checkpoint:
-      logging.info("Loading checkpoint for eval: " + checkpoint)
-      # Restores from checkpoint
-      saver.restore(sess, checkpoint)
-      # Assuming model_checkpoint_path looks something like:
-      # /my-favorite-path/yt8m_train/model.ckpt-0, extract global_step from it.
-      global_step_val = checkpoint.split("/")[-1].split("-")[-1]
-    else:
-      logging.info("No checkpoint file found.")
-      return global_step_val
+  if FLAGS.half_memory:
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.45)
+    sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+  else:
+    sess = tf.Session()
 
-    if global_step_val == last_global_step_val:
-      logging.info("skip this checkpoint global_step_val=%s "
-                   "(same as the previous one).", global_step_val)
-      return global_step_val
-
-    sess.run([tf.local_variables_initializer()])
-
-    # Start the queue runners.
-    fetches = [id_batch, prediction_batch, label_batch, loss, mean_iou, num_examples, summary_op]
-    coord = tf.train.Coordinator()
-    try:
-      threads = []
-      for qr in tf.get_collection(tf.GraphKeys.QUEUE_RUNNERS):
-        threads.extend(qr.create_threads(
-            sess, coord=coord, daemon=True,
-            start=True))
-      logging.info("enter eval_once loop global_step_val = %s. ",
-                   global_step_val)
-
-      examples_processed = 0
-      total_iou_val = 0.0
-      total_loss_val = 0.0
-
-      while not coord.should_stop():
-        batch_start_time = time.time()
-
-        _, predictions_val, labels_val, loss_val, mean_iou_val, num_examples_val, summary_val = sess.run(fetches)
-
-        seconds_per_batch = time.time() - batch_start_time
-        example_per_second = num_examples_val / seconds_per_batch
-
-        examples_processed += num_examples_val
-        total_iou_val += mean_iou_val * num_examples_val
-        total_loss_val += loss_val * num_examples_val
-
-        logging.info("examples_processed: %d | mean_iou: %.5f", examples_processed, mean_iou_val)
-
-    except tf.errors.OutOfRangeError as e:
-      logging.info(
-          "Done with batched inference. Now calculating global performance "
-          "metrics.")
-      # calculate the metrics for the entire epoch
-      epoch_info_dict = {}
-      epoch_info_dict["epoch_id"] = global_step_val
-      epoch_info_dict["mean_iou"] = total_iou_val / examples_processed
-      epoch_info_dict["avg_loss"] = total_loss_val / examples_processed
-
-      summary_writer.add_summary(summary_val, global_step_val)
-      epochinfo = utils.AddEpochSummary(
-          summary_writer,
-          epoch_info_dict,
-          summary_scope="Eval")
-      logging.info(epochinfo)
-
-    except Exception as e:  # pylint: disable=broad-except
-      logging.info("Unexpected exception: " + str(e))
-      coord.request_stop(e)
-
-    coord.request_stop()
-    coord.join(threads, stop_grace_period_secs=10)
-
+  if FLAGS.model_checkpoint_path:
+    checkpoint = FLAGS.model_checkpoint_path
+  else:
+    checkpoint = tf.train.latest_checkpoint(FLAGS.train_dir)
+  if checkpoint:
+    logging.info("Loading checkpoint for eval: " + checkpoint)
+    # Restores from checkpoint
+    saver.restore(sess, checkpoint)
+    # Assuming model_checkpoint_path looks something like:
+    # /my-favorite-path/yt8m_train/model.ckpt-0, extract global_step from it.
+    global_step_val = checkpoint.split("/")[-1].split("-")[-1]
+  else:
+    logging.info("No checkpoint file found.")
     return global_step_val
+
+  if global_step_val == last_global_step_val:
+    logging.info("skip this checkpoint global_step_val=%s "
+                 "(same as the previous one).", global_step_val)
+    return global_step_val
+
+  sess.run([tf.local_variables_initializer()])
+
+  # Start the queue runners.
+  fetches = [id_batch, prediction_batch, label_batch, loss, mean_iou, num_examples, summary_op]
+  coord = tf.train.Coordinator()
+  try:
+    threads = []
+    for qr in tf.get_collection(tf.GraphKeys.QUEUE_RUNNERS):
+      threads.extend(qr.create_threads(
+          sess, coord=coord, daemon=True,
+          start=True))
+    logging.info("enter eval_once loop global_step_val = %s. ",
+                 global_step_val)
+
+    examples_processed = 0
+    total_iou_val = 0.0
+    total_loss_val = 0.0
+
+    while not coord.should_stop():
+      batch_start_time = time.time()
+
+      _, predictions_val, labels_val, loss_val, mean_iou_val, num_examples_val, summary_val = sess.run(fetches)
+
+      seconds_per_batch = time.time() - batch_start_time
+      example_per_second = num_examples_val / seconds_per_batch
+
+      examples_processed += num_examples_val
+      total_iou_val += mean_iou_val * num_examples_val
+      total_loss_val += loss_val * num_examples_val
+
+      logging.info("examples_processed: %d | mean_iou: %.5f", examples_processed, mean_iou_val)
+
+  except tf.errors.OutOfRangeError as e:
+    logging.info(
+        "Done with batched inference. Now calculating global performance "
+        "metrics.")
+    # calculate the metrics for the entire epoch
+    epoch_info_dict = {}
+    epoch_info_dict["epoch_id"] = global_step_val
+    epoch_info_dict["mean_iou"] = total_iou_val / examples_processed
+    epoch_info_dict["avg_loss"] = total_loss_val / examples_processed
+
+    summary_writer.add_summary(summary_val, global_step_val)
+    epochinfo = utils.AddEpochSummary(
+        summary_writer,
+        epoch_info_dict,
+        summary_scope="Eval")
+    logging.info(epochinfo)
+
+  except Exception as e:  # pylint: disable=broad-except
+    logging.info("Unexpected exception: " + str(e))
+    coord.request_stop(e)
+
+  coord.request_stop()
+  coord.join(threads, stop_grace_period_secs=10)
+
+  sess.close()
+  return global_step_val
 
 
 def evaluate():

@@ -171,9 +171,15 @@ class MixedScaledUNetModel(models.BaseModel):
     predictions = []
     for i, downsample_rate in enumerate(rates):
       scope = "scale%d_" % downsample_rate
-      m = self.downsampling_2D(model_input, name="downsample_%d"%i, size=(downsample_rate, downsample_rate), scope=scope)
+      if downsample_rate > 1:
+        m = self.downsampling_2D(model_input, name="downsample_%d"%i, size=(downsample_rate, downsample_rate), scope=scope)
+      else:
+        m = model_input
       r = self.unet(m, is_training, scope=scope, **unused_params)
-      p = self.upsampling_2D(r, name="prediction_%d"%i, size=(downsample_rate, downsample_rate), scope=scope)
+      if downsample_rate > 1:
+        p = self.upsampling_2D(r, name="prediction_%d"%i, size=(downsample_rate, downsample_rate), scope=scope)
+      else:
+        p = r
       predictions.append(p)
 
     predictions = tf.add_n(predictions) / float(len(rates))

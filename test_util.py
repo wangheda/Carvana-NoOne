@@ -19,7 +19,7 @@ def convert_id_values_to_csv(image_id, value_list):
         pair_list.append(begin_index + 1)
         pair_list.append(num_ones)
       last_zero = i
-  return "%s,%s" % (image_id, " ".join(map(str, pair_list)))
+  return "%s.jpg,%s" % (image_id, " ".join(map(str, pair_list)))
 
 def print_id_array_to_str(image_id, np_array):
   return "%s\t%s" % (image_id, "\t".join(map(str, np_array.flatten("C").tolist())))
@@ -36,7 +36,7 @@ def convert_id_array_to_csv(image_id, np_array):
         pair_list.append(begin_index + 1)
         pair_list.append(num_ones)
       last_zero = i
-  return "%s,%s" % (image_id, " ".join(map(str, pair_list)))
+  return "%s.jpg,%s" % (image_id, " ".join(map(str, pair_list)))
 
 
 #############################
