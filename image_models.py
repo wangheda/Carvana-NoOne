@@ -26,3 +26,5 @@ from all_image_models import *
 
 flags.DEFINE_integer("scaled_unet_downsample_rate", 2, "Rate of downsampling in ScaledUNetModel.")
 flags.DEFINE_string("mixed_scaled_unet_downsample_rate", "2,3,5", "Rate of downsampling in MixedScaledUNetModel.")
+flags.DEFINE_string("stacked_scaled_unet_downsample_rate", "5,3,2", "Rate of downsampling in StackedScaledUNetModel.")
+flags.DEFINE_boolean("stacked_scaled_unet_use_support_predictions", False, "Whether to treat predictions in the middle layers as support predictions in StackedScaledUNetModel.")

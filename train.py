@@ -51,6 +51,9 @@ if __name__ == "__main__":
       "Which architecture to use for the model. Models are defined "
       "in models.py.")
   flags.DEFINE_bool(
+      "multitask", False,
+      "Whether to consider support_predictions")
+  flags.DEFINE_bool(
       "start_new_model", False,
       "If set, this will not resume from a checkpoint and will instead create a"
       " new model instance.")
@@ -270,7 +273,13 @@ def build_graph(reader,
     if "loss" in result.keys():
       label_loss = result["loss"]
     else:
-      label_loss = label_loss_fn.calculate_loss(predictions, image_mask)
+      if FLAGS.multitask:
+        support_predictions = result["support_predictions"]
+        tf.summary.histogram("model/support_predictions", support_predictions)
+        print "support_predictions", support_predictions
+        label_loss = label_loss_fn.calculate_loss(predictions, support_predictions, image_mask)
+      else:
+        label_loss = label_loss_fn.calculate_loss(predictions, image_mask)
 
     tf.summary.histogram("model/predictions", predictions)
     tf.summary.scalar("label_loss", label_loss)

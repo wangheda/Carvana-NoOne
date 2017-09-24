@@ -14,6 +14,7 @@
 
 """Provides definitions for non-regularized training or test losses."""
 
+import sys
 import numpy as np
 import tensorflow as tf
 from tensorflow import flags
@@ -82,6 +83,7 @@ class MeanSquareErrorLoss(BaseLoss):
       mse_loss = tf.square(float_labels - predictions)
       return tf.reduce_mean(tf.reduce_sum(mse_loss, 1))
 
+
 class CrossEntropyLoss(BaseLoss):
   """Calculate the cross entropy loss between the predictions and labels.
   """
@@ -93,7 +95,47 @@ class CrossEntropyLoss(BaseLoss):
       cross_entropy_loss = float_labels * tf.log(predictions + epsilon) + (
           1 - float_labels) * tf.log(1 - predictions + epsilon)
       cross_entropy_loss = tf.negative(cross_entropy_loss)
-      return tf.reduce_mean(tf.reduce_sum(cross_entropy_loss, 1))
+      return tf.reduce_mean(tf.reduce_sum(cross_entropy_loss, [1,2]))
+
+
+class IOULoss(BaseLoss):
+  """Calculate the cross entropy loss between the predictions and labels.
+  """
+
+  def calculate_loss(self, predictions, labels, weights=None, **unused_params):
+    """Returns a (approx) IOU score
+    intesection = y_pred.flatten() * y_true.flatten()
+    Then, IOU = 2 * intersection / (y_pred.sum() + y_true.sum() + 1e-7) + 1e-7
+    Args:
+    y_pred (4-D array): (N, H, W, 1)
+    y_true (4-D array): (N, H, W, 1)
+    Returns:
+    float: IOU score
+    """
+    with tf.name_scope("loss_iou"):
+      float_labels = tf.cast(labels, tf.float32)
+      print float_labels, predictions
+      dims = predictions.get_shape().as_list()[1:]
+      if len(dims) == 3:
+        H, W, C = dims
+        intersection = 2 * tf.reduce_sum(predictions * float_labels, axis=[1,2,3]) + 1e-7
+        denominator = tf.reduce_sum(predictions, axis=[1,2,3]) + tf.reduce_sum(float_labels, axis=[1,2,3]) + 1e-7
+      elif len(dims) == 2:
+        H, W = dims
+        intersection = 2 * tf.reduce_sum(predictions * float_labels, axis=[1,2]) + 1e-7
+        denominator = tf.reduce_sum(predictions, axis=[1,2]) + tf.reduce_sum(float_labels, axis=[1,2]) + 1e-7
+      return - tf.reduce_mean(intersection / denominator)
+
+
+class IOUCrossEntropyLoss(BaseLoss):
+  """Calculate the cross entropy loss between the predictions and labels.
+  """
+
+  def calculate_loss(self, predictions, labels, weights=None, **unused_params):
+    iou_loss_fn = IOULoss()
+    cross_ent_fn = CrossEntropyLoss()
+    return 0.0001 * cross_ent_fn.calculate_loss(predictions, labels) + 0.9999 * iou_loss_fn.calculate_loss(predictions, labels)
+
 
 class HingeLoss(BaseLoss):
   """Calculate the hinge loss between the predictions and labels.
@@ -150,7 +192,7 @@ class MultiTaskLoss(BaseLoss):
       new_labels = []
       for st in support_type.split(","):
         new_labels.append(tf.cast(self.get_support(labels, st), dtype=tf.float32))
-      support_labels = tf.concat(new_labels, axis=1)
+      support_labels = tf.stack(new_labels, axis=3)
       return support_labels
     elif support_type == "label":
       float_labels = tf.cast(labels, dtype=tf.float32)
@@ -162,9 +204,35 @@ class MultiTaskCrossEntropyLoss(MultiTaskLoss):
   """Calculate the loss between the predictions and labels.
   """
   def calculate_loss(self, predictions, support_predictions, labels, **unused_params):
-    support_labels = self.get_support(labels)
+    support_labels = self.get_support(labels, support_type=FLAGS.support_type)
     ce_loss_fn = CrossEntropyLoss()
+    print >> sys.stderr, predictions, labels
     cross_entropy_loss = ce_loss_fn.calculate_loss(predictions, labels, **unused_params)
     cross_entropy_loss2 = ce_loss_fn.calculate_loss(support_predictions, support_labels, **unused_params)
     return cross_entropy_loss * (1.0 - FLAGS.support_loss_percent) + cross_entropy_loss2 * FLAGS.support_loss_percent
+
+
+class MultiTaskIOULoss(MultiTaskLoss):
+  """Calculate the loss between the predictions and labels.
+  """
+  def calculate_loss(self, predictions, support_predictions, labels, **unused_params):
+    support_labels = self.get_support(labels, support_type=FLAGS.support_type)
+    iou_loss_fn = IOULoss()
+    print >> sys.stderr, predictions, labels
+    iou_loss = iou_loss_fn.calculate_loss(predictions, labels, **unused_params)
+    iou_loss2 = iou_loss_fn.calculate_loss(support_predictions, support_labels, **unused_params)
+    return iou_loss * (1.0 - FLAGS.support_loss_percent) + iou_loss2 * FLAGS.support_loss_percent
+
+
+class MultiTaskIOUCrossEntropyLoss(MultiTaskLoss):
+  """Calculate the loss between the predictions and labels.
+  """
+  def calculate_loss(self, predictions, support_predictions, labels, **unused_params):
+    support_labels = self.get_support(labels, support_type=FLAGS.support_type)
+    iou_loss_fn = IOUCrossEntropyLoss()
+    print >> sys.stderr, predictions, labels
+    iou_loss = iou_loss_fn.calculate_loss(predictions, labels, **unused_params)
+    iou_loss2 = iou_loss_fn.calculate_loss(support_predictions, support_labels, **unused_params)
+    return iou_loss * (1.0 - FLAGS.support_loss_percent) + iou_loss2 * FLAGS.support_loss_percent
+
 

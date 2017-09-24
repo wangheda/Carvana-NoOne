@@ -18,7 +18,11 @@ import sys
 import utils
 import tensorflow as tf
 from tensorflow import logging
+from tensorflow import flags
 
+FLAGS = flags.FLAGS
+flags.DEFINE_bool("use_data_augmentation", False,
+    "Whether to augmenting images before apply them.")
 
 class BaseReader(object):
   """Inherit from this class when implementing new readers."""
@@ -27,6 +31,30 @@ class BaseReader(object):
     """Create a thread for generating prediction and label tensors."""
     raise NotImplementedError()
 
+def image_augmentation(image, mask):
+  """Returns (maybe) augmented images
+  (1) Random flip (left <--> right)
+  (2) Random flip (up <--> down)
+  (3) Random brightness
+  (4) Random hue
+  Args:
+  image (3-D Tensor): Image tensor of (H, W, C)
+  mask (3-D Tensor): Mask image tensor of (H, W, 1)
+  Returns:
+  image: Maybe augmented image (same shape as input `image`)
+  mask: Maybe augmented mask (same shape as input `mask`)
+  """
+  concat_image = tf.concat([image, tf.cast(tf.expand_dims(mask, axis=2), tf.uint8)], axis=-1)
+
+  maybe_flipped = tf.image.random_flip_left_right(concat_image)
+
+  image = maybe_flipped[:, :, :-1]
+  mask = tf.cast(maybe_flipped[:, :, -1], tf.bool)
+
+  image = tf.image.random_brightness(image, 0.1)
+  image = tf.image.random_hue(image, 0.1)
+
+  return image, mask
 
 class CarvanaFeatureReader(BaseReader):
   """Reads TFRecords of pre-aggregated Examples.
@@ -83,16 +111,22 @@ class CarvanaFeatureReader(BaseReader):
     # [height, width, channels]
     image_data = tf.image.decode_jpeg(image_data, channels=3)
     # image_data.set_shape(self.height * self.width * self.channels)
-    image_data = tf.reshape(image_data, shape=[1, self.height, self.width, self.channels])
+    image_data = tf.reshape(image_data, shape=[self.height, self.width, self.channels])
     print >> sys.stderr, " image_data", image_data
 
     # [height, width]
     image_mask = tf.decode_raw(image_mask, tf.uint8)
     image_mask.set_shape(self.height * self.width)
-    image_mask = tf.reshape(image_mask, shape=[1, self.height, self.width])
+    image_mask = tf.reshape(image_mask, shape=[self.height, self.width])
     image_mask = tf.greater(image_mask, 0)
     print >> sys.stderr, " image_mask", image_mask
 
+    # image augmentation
+    if hasattr(FLAGS, "use_data_augmentation") and FLAGS.use_data_augmentation:
+      image_data, image_mask = image_augmentation(image_data, image_mask)
+
+    image_data = tf.reshape(image_data, shape=[1, self.height, self.width, self.channels])
+    image_mask = tf.reshape(image_mask, shape=[1, self.height, self.width])
     return image_id, image_data, image_mask
 
 

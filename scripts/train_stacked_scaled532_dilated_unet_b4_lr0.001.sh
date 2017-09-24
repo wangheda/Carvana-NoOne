@@ -1,0 +1,15 @@
+python train.py \
+  --train_dir=model/stacked_scaled532_dilated_unet_train-3-accum \
+  --train_data_list=lists/train-3.list \
+  --learning_rate_decay=0.99 \
+  --num_epochs=60 \
+  --accumulate_gradients=True \
+  --apply_every_n_batches=2 \
+  --batch_size=2 \
+  --stacked_scaled_unet_use_support_predictions=True \
+  --base_learning_rate=1e-3 \
+  --label_loss=MultiTaskCrossEntropyLoss \
+  --multitask=True \
+  --support_loss_percent=0.2 \
+  --support_type="label,label" \
+  --model=StackedScaledDilatedUNetModel
