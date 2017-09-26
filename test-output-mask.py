@@ -190,7 +190,7 @@ def write_to_record(id_batch, image_batch, mask_batch, file_id):
     writer = tf.python_io.TFRecordWriter(FLAGS.output_dir + '/' + FLAGS.prefix + '-%04d.tfrecord' % file_id)
     for i in xrange(len(id_batch)):
         item_id = id_batch[i]
-        example = get_output_feature(item_id, [image_batch[i], mask_batch[i]], ['prediction', 'mask'])
+        example = get_output_feature(item_id, [image_batch[i], mask_batch[i]], ['image', 'mask'])
         serialized = example.SerializeToString()
         writer.write(serialized)
     writer.close()

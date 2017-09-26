@@ -3,6 +3,7 @@ model
 train-images
 train-masks
 train-data
+train-predictions
 test-images
 test-data
 output/

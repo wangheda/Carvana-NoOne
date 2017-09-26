@@ -130,6 +130,80 @@ class CarvanaFeatureReader(BaseReader):
     return image_id, image_data, image_mask
 
 
+class CarvanaPredictionFeatureReader(BaseReader):
+  """Reads TFRecords of pre-aggregated Examples.
+
+  The TFRecords must contain Examples with a sparse int64 'labels' feature and
+  a fixed length float32 feature, obtained from the features in 'feature_name'.
+  The float features are assumed to be an average of dequantized values.
+  """
+
+  def __init__(self,
+               width=1918,
+               height=1280,
+               channels=3):
+    """Construct a CarvanaFeatureReader.
+
+    Args:
+      num_classes: a positive integer for the number of classes.
+      feature_sizes: positive integer(s) for the feature dimensions as a list.
+      feature_names: the feature name(s) in the tensorflow record as a list.
+    """
+    self.width = width
+    self.height = height
+    self.channels = channels
+
+  def prepare_reader(self, filename_queue, batch_size=16):
+    """Creates a single reader thread for .
+
+    Args:
+      filename_queue: A tensorflow queue of filename locations.
+
+    Returns:
+      A tuple of video indexes, features, labels, and padding data.
+    """
+    reader = tf.TFRecordReader()
+    _, serialized_examples = reader.read(filename_queue)
+
+    feature_map = {"id": tf.FixedLenFeature([], tf.string),
+                   "image": tf.FixedLenFeature([], tf.string),
+                   "mask": tf.FixedLenFeature([], tf.string)}
+
+    features = tf.parse_single_example(serialized_examples, features=feature_map)
+    print >> sys.stderr, " features", features
+
+    image_id = features["id"]
+    image_data = features["image"]
+    image_mask = features["mask"]
+    print >> sys.stderr, " image_id", image_id
+    print >> sys.stderr, " image_data", image_data
+    print >> sys.stderr, " image_mask", image_mask
+
+    # reshape to rank1
+    image_id = tf.reshape(image_id, shape=[1])
+
+    # [height, width, channels]
+    image_data = tf.decode_raw(image_data, tf.uint8)
+    image_data.set_shape(self.height * self.width * self.channels)
+    image_data = tf.reshape(image_data, shape=[self.height, self.width, self.channels])
+    print >> sys.stderr, " image_data", image_data
+
+    # [height, width]
+    image_mask = tf.decode_raw(image_mask, tf.uint8)
+    image_mask.set_shape(self.height * self.width)
+    image_mask = tf.reshape(image_mask, shape=[self.height, self.width])
+    image_mask = tf.greater(image_mask, 0)
+    print >> sys.stderr, " image_mask", image_mask
+
+    # image augmentation
+    if hasattr(FLAGS, "use_data_augmentation") and FLAGS.use_data_augmentation:
+      image_data, image_mask = image_augmentation(image_data, image_mask)
+
+    image_data = tf.reshape(image_data, shape=[1, self.height, self.width, self.channels])
+    image_mask = tf.reshape(image_mask, shape=[1, self.height, self.width])
+    return image_id, image_data, image_mask
+
+
 class CarvanaTestFeatureReader(BaseReader):
   """Reads TFRecords of pre-aggregated Examples.
 

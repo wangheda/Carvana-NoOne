@@ -74,14 +74,13 @@ class MeanSquareErrorLoss(BaseLoss):
   """
 
   def calculate_loss(self, predictions, labels, **unused_params):
-    with tf.name_scope("loss_xent"):
+    with tf.name_scope("loss_mse"):
+      shape = predictions.get_shape().as_list()
+      dims = range(len(shape))
       epsilon = 10e-6
-      if FLAGS.label_smoothing:
-        float_labels = smoothing(labels)
-      else:
-        float_labels = tf.cast(labels, tf.float32)
+      float_labels = tf.cast(labels, tf.float32)
       mse_loss = tf.square(float_labels - predictions)
-      return tf.reduce_mean(tf.reduce_sum(mse_loss, 1))
+      return tf.reduce_mean(tf.reduce_sum(mse_loss, dims[1:]))
 
 
 class CrossEntropyLoss(BaseLoss):
@@ -90,12 +89,14 @@ class CrossEntropyLoss(BaseLoss):
 
   def calculate_loss(self, predictions, labels, weights=None, **unused_params):
     with tf.name_scope("loss_xent"):
+      shape = predictions.get_shape().as_list()
+      dims = range(len(shape))
       epsilon = 10e-6
       float_labels = tf.cast(labels, tf.float32)
       cross_entropy_loss = float_labels * tf.log(predictions + epsilon) + (
           1 - float_labels) * tf.log(1 - predictions + epsilon)
       cross_entropy_loss = tf.negative(cross_entropy_loss)
-      return tf.reduce_mean(tf.reduce_sum(cross_entropy_loss, [1,2]))
+      return tf.reduce_mean(tf.reduce_sum(cross_entropy_loss, dims[1:]))
 
 
 class IOULoss(BaseLoss):

@@ -1,7 +1,7 @@
 
 DIR="$(pwd)"
 
-GPU_ID=1
+GPU_ID=0
 EVERY=1016
 MODEL=StackedScaledUNetModel
 MODEL_DIR="${DIR}/model/stacked_scaled532_unet_train-1-accum_support_dataaugmentation"
