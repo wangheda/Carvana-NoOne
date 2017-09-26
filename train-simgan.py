@@ -230,6 +230,7 @@ def optimizing(optimizer, final_loss, clip_gradient_norm, global_step, prefix, s
   else:
     gradients = optimizer.compute_gradients(final_loss,
         colocate_gradients_with_ops=False, var_list=tvs)
+    print gradients
     if clip_gradient_norm > 0:
       with tf.name_scope('clip_grads'):
         gradients = utils.clip_gradient_norms(gradients, clip_gradient_norm)
@@ -331,7 +332,7 @@ def build_graph(refiner_model,
   if "loss" in result.keys():
     label_loss = result["loss"]
   else:
-    refiner_loss = refiner_loss_fn.calculate_loss(predictions, image_mask) * 2
+    refiner_loss = refiner_loss_fn.calculate_loss(predictions, image_mask)
     similarity_loss = similarity_loss_fn.calculate_loss(predictions, image_mask)
     tf.summary.scalar("refiner_loss", refiner_loss)
     tf.summary.scalar("similarity_loss", similarity_loss)
@@ -398,16 +399,16 @@ def build_graph(refiner_model,
   def split_into_small_patches(masks, label_value):
     masks = tf.expand_dims(masks, axis=3)
     masks = tf.pad(masks, paddings=[[0,0], [0,0], [1,1], [0,0]])
-    PATCH_SIZE = [1, 160, 160, 1]
-    patches = tf.extract_image_patches(masks, PATCH_SIZE, PATCH_SIZE, [1,1,1,1], "VALID")
-    patches = tf.reshape(patches, [-1, 160, 160, 1])
+    PATCH_SIZE = [1, 320, 320, 1]
+    HALF_PATCH_SIZE = [1, 160, 160, 1]
+    patches = tf.extract_image_patches(masks, PATCH_SIZE, HALF_PATCH_SIZE, [1,1,1,1], "VALID")
+    patches = tf.reshape(patches, [-1, 320, 320, 1])
     if label_value == 0:
       labels = tf.zeros([tf.shape(patches)[0],1])
     else:
       labels = tf.ones([tf.shape(patches)[0],1])
     return patches, labels
-      
-    
+
 
   with tf.name_scope("discriminator_model"):
     p_patches, p_labels = split_into_small_patches(tf.cast(bool_predictions, tf.float32), 0)
@@ -454,13 +455,13 @@ def build_graph(refiner_model,
   if "update_ops" in disc_result.keys():
     disc_update_ops += disc_result["update_ops"]
   if disc_update_ops:
-    with tf.control_dependencies(update_ops):
-      disc_barrier = tf.no_op(name="gradient_barrier")
+    with tf.control_dependencies(disc_update_ops):
+      disc_barrier = tf.no_op(name="disc_gradient_barrier")
       with tf.control_dependencies([disc_barrier]):
         disc_label_loss = tf.identity(disc_label_loss)
 
   # Incorporate the L2 weight penalties etc.
-  disc_final_loss = regularization_penalty * reg_loss + disc_label_loss
+  disc_final_loss = regularization_penalty * disc_reg_loss + disc_label_loss
   tf.add_to_collection("discriminator_loss", disc_label_loss)
 
   optimizing(optimizer, disc_final_loss, clip_gradient_norm, global_step, prefix="discriminator", scope="discriminator_model")
@@ -561,7 +562,7 @@ class Trainer(object):
     logging.info("%s: Starting managed session.", task_as_string(self.task))
     with sv.managed_session(target, config=self.config) as sess:
 
-      steps = 0
+      steps = sess.run(global_step)
       try:
         logging.info("%s: Entering training loop.", task_as_string(self.task))
         while not sv.should_stop():
@@ -571,24 +572,26 @@ class Trainer(object):
 
           num_examples_processed = 0
 
-          refiner_stage = 1000
-          discriminator_stage = 1000
-          interleave_stage = 100
+          refiner_stage = 2000
+          discriminator_stage = 2000
+          interleave_stage = 200
 
           training_flag = ""
 
           if steps < refiner_stage:
             training_flag = " refiner_init"
+            sub_loss = refiner_loss
             if FLAGS.accumulate_gradients:
-              loss = refiner_loss
+              init_ops = refiner_init_ops
               accum_ops = refiner_accum_ops
               apply_op = refiner_apply_op
             else:
               train_op = refiner_train_op
           elif refiner_stage <= steps < refiner_stage + discriminator_stage:
             training_flag = " discriminator_init"
+            sub_loss = discriminator_loss
             if FLAGS.accumulate_gradients:
-              loss = discriminator_loss
+              init_ops = discriminator_init_ops
               accum_ops = discriminator_accum_ops
               apply_op = discriminator_apply_op
             else:
@@ -596,16 +599,18 @@ class Trainer(object):
           else:
             if ((steps - refiner_stage - discriminator_stage) / interleave_stage) % 2 == 0:
               training_flag = " refiner"
+              sub_loss = refiner_loss
               if FLAGS.accumulate_gradients:
-                loss = refiner2_loss
+                init_ops = refiner2_init_ops
                 accum_ops = refiner2_accum_ops
                 apply_op = refiner2_apply_op
               else:
                 train_op = refiner2_train_op
             else:
               training_flag = " discriminator"
+              sub_loss = discriminator_loss
               if FLAGS.accumulate_gradients:
-                loss = discriminator_loss
+                init_ops = discriminator_init_ops
                 accum_ops = discriminator_accum_ops
                 apply_op = discriminator_apply_op
               else:
@@ -616,20 +621,21 @@ class Trainer(object):
             # init the buffer to zero
             sess.run(init_ops)
             # compute gradients
-            loss_val, mean_iou_val = [], []
+            loss_val, sub_loss_val, mean_iou_val = [], [], []
             for i in xrange(FLAGS.apply_every_n_batches):
-              ret_list = sess.run([num_examples, loss, mean_iou] + accum_ops)
+              ret_list = sess.run([num_examples, loss, sub_loss, mean_iou] + accum_ops)
               num_examples_processed += ret_list[0]
               loss_val.append(ret_list[1])
-              mean_iou_val.append(ret_list[2])
+              sub_loss_val.append(ret_list[2])
+              mean_iou_val.append(ret_list[3])
             # accumulate all
-            loss_val, mean_iou_val = map(mean, [loss_val, mean_iou_val])
+            loss_val, sub_loss_val, mean_iou_val = map(mean, [loss_val, sub_loss_val, mean_iou_val])
             _, global_step_val = sess.run([apply_op, global_step])
 
           else:
             # the original apply-every-batch scheme
-            _, global_step_val, loss_val, predictions_val, labels_val, mean_iou_val, num_examples_val = sess.run(
-                [train_op, global_step, loss, predictions, labels, mean_iou, num_examples])
+            _, global_step_val, loss_val, sub_loss_val, predictions_val, labels_val, mean_iou_val, num_examples_val = sess.run(
+                [train_op, global_step, loss, sub_loss, predictions, labels, mean_iou, num_examples])
             num_examples_processed += num_examples_val
 
           seconds_per_batch = time.time() - batch_start_time
@@ -640,6 +646,7 @@ class Trainer(object):
             logging.info("%s: training step " + str(global_step_val) + 
                          "| IOU: " + ("%.5f" % mean_iou_val) + 
                          " Loss: " + str(loss_val) +
+                         " SubLoss: " + str(sub_loss_val) +
                          " " + training_flag, task_as_string(self.task))
 
             sv.summary_writer.add_summary(
