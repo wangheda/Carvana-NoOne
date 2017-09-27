@@ -333,7 +333,8 @@ def build_graph(refiner_model,
     label_loss = result["loss"]
   else:
     refiner_loss = refiner_loss_fn.calculate_loss(predictions, image_mask)
-    similarity_loss = similarity_loss_fn.calculate_loss(predictions, image_mask)
+    image_input = tf.cast(tf.squeeze(image_data, axis=3) > 127, tf.int32)
+    similarity_loss = similarity_loss_fn.calculate_loss(predictions, image_input)
     tf.summary.scalar("refiner_loss", refiner_loss)
     tf.summary.scalar("similarity_loss", similarity_loss)
     label_loss = refiner_loss + similarity_loss
@@ -366,10 +367,10 @@ def build_graph(refiner_model,
     with tf.control_dependencies(update_ops):
       barrier = tf.no_op(name="gradient_barrier")
       with tf.control_dependencies([barrier]):
-        label_loss = tf.identity(label_loss)
+        bar_label_loss = tf.identity(label_loss)
 
   # Incorporate the L2 weight penalties etc.
-  final_loss = regularization_penalty * reg_loss + label_loss
+  final_loss = regularization_penalty * reg_loss + bar_label_loss
   optimizing(optimizer, final_loss, clip_gradient_norm, global_step, prefix="refiner", scope="refiner_model")
 
   labels = tf.cast(image_mask, tf.int32)
@@ -411,7 +412,7 @@ def build_graph(refiner_model,
 
 
   with tf.name_scope("discriminator_model"):
-    p_patches, p_labels = split_into_small_patches(tf.cast(bool_predictions, tf.float32), 0)
+    p_patches, p_labels = split_into_small_patches(predictions, 0)
     t_patches, t_labels = split_into_small_patches(tf.cast(true_mask, tf.float32), 1)
     disc_batch = tf.concat([p_patches, t_patches], axis=0)
     disc_labels = tf.concat([p_labels, t_labels], axis=0)
@@ -432,7 +433,7 @@ def build_graph(refiner_model,
   if "loss" in disc_result.keys():
     disc_label_loss = disc_result["loss"]
   else:
-    disc_label_loss = discriminator_loss_fn.calculate_loss(disc_predictions, disc_labels) * 4000
+    disc_label_loss = discriminator_loss_fn.calculate_loss(disc_predictions, disc_labels) * 20000
     tf.summary.scalar("discriminator_loss", disc_label_loss)
 
   tf.summary.histogram("model/disc_predictions", disc_predictions)
@@ -458,16 +459,31 @@ def build_graph(refiner_model,
     with tf.control_dependencies(disc_update_ops):
       disc_barrier = tf.no_op(name="disc_gradient_barrier")
       with tf.control_dependencies([disc_barrier]):
-        disc_label_loss = tf.identity(disc_label_loss)
+        bar_disc_label_loss = tf.identity(disc_label_loss)
 
   # Incorporate the L2 weight penalties etc.
-  disc_final_loss = regularization_penalty * disc_reg_loss + disc_label_loss
+  disc_final_loss = regularization_penalty * disc_reg_loss + bar_disc_label_loss
   tf.add_to_collection("discriminator_loss", disc_label_loss)
 
   optimizing(optimizer, disc_final_loss, clip_gradient_norm, global_step, prefix="discriminator", scope="discriminator_model")
 
-  refiner2_final_loss = regularization_penalty * reg_loss + label_loss - disc_label_loss
+  # refiner 2
+  refiner2_label_loss = label_loss - disc_label_loss
+
+  # Adds update_ops (e.g., moving average updates in batch normalization) as
+  # a dependency to the train_op.
+  refiner2_update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope="refiner_model")
+  if "update_ops" in result.keys():
+    refiner2_update_ops += result["update_ops"]
+  if refiner2_update_ops:
+    with tf.control_dependencies(refiner2_update_ops):
+      refiner2_barrier = tf.no_op(name="gradient_barrier")
+      with tf.control_dependencies([refiner2_barrier]):
+        bar_refiner2_label_loss = tf.identity(refiner2_label_loss)
+
+  refiner2_final_loss = regularization_penalty * reg_loss + bar_refiner2_label_loss
   optimizing(optimizer, refiner2_final_loss, clip_gradient_norm, global_step, prefix="refiner2", scope="refiner_model")
+  tf.add_to_collection("refiner2_loss", refiner2_label_loss)
 
 
 
@@ -520,6 +536,7 @@ class Trainer(object):
 
         loss = tf.get_collection("loss")[0]
         refiner_loss = tf.get_collection("refiner_loss")[0]
+        refiner2_loss = tf.get_collection("refiner2_loss")[0]
         discriminator_loss = tf.get_collection("discriminator_loss")[0]
         similarity_loss = tf.get_collection("similarity_loss")[0]
 
@@ -572,9 +589,11 @@ class Trainer(object):
 
           num_examples_processed = 0
 
-          refiner_stage = 2000
-          discriminator_stage = 2000
-          interleave_stage = 200
+          refiner_stage = 10000
+          discriminator_stage = 500
+          interleave_stage = 40
+          refiner_ratio = 4
+          discriminator_ratio = 1
 
           training_flag = ""
 
@@ -597,9 +616,10 @@ class Trainer(object):
             else:
               train_op = discriminator_train_op
           else:
-            if ((steps - refiner_stage - discriminator_stage) / interleave_stage) % 2 == 0:
+            if ((steps - refiner_stage - discriminator_stage) / interleave_stage) % \
+                (refiner_ratio + discriminator_ratio) < refiner_ratio:
               training_flag = " refiner"
-              sub_loss = refiner_loss
+              sub_loss = refiner2_loss
               if FLAGS.accumulate_gradients:
                 init_ops = refiner2_init_ops
                 accum_ops = refiner2_accum_ops

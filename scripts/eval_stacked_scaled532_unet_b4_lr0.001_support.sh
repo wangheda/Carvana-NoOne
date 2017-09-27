@@ -1,12 +1,12 @@
 
 DIR="$(pwd)"
 
-GPU_ID=0
+GPU_ID=1
 EVERY=1016
 MODEL=StackedScaledUNetModel
 MODEL_DIR="${DIR}/model/stacked_scaled532_unet_train-1-accum_support_dataaugmentation"
 
-start=0
+start=4092
 for checkpoint in $(cd $MODEL_DIR && python ${DIR}/misc/select.py $EVERY); do
   echo $checkpoint;
   if [ $checkpoint -gt $start ]; then
